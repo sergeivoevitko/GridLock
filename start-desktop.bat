@@ -17,12 +17,21 @@ if errorlevel 1 (
 if not exist node_modules\electron (
   echo First run: installing the desktop app. This takes a minute or two...
   call npm install
-  if errorlevel 1 (
-    echo.
-    echo  Install failed. Check your internet connection and try again.
-    pause
-    exit /b 1
-  )
+  if errorlevel 1 goto failed
+)
+rem Newer npm versions skip Electron's download step, so run it directly.
+if not exist node_modules\electron\dist\electron.exe (
+  echo Downloading the Electron app window. This takes a minute...
+  node node_modules\electron\install.js
+  if errorlevel 1 goto failed
 )
 call npm run desktop
 if errorlevel 1 pause
+exit /b 0
+
+:failed
+echo.
+echo  Install failed. Check your internet connection and try again.
+echo  If it keeps failing, delete the node_modules folder and run this file again.
+pause
+exit /b 1
