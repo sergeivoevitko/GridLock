@@ -72,9 +72,9 @@
   // ---------- render ----------
   function render() {
     const posts = new Map((feed ? feed.posts : []).map((p) => [p.id, p]));
-    order = order.filter((k) => (k.startsWith('ig:') ? posts.has(k.slice(3)) : locals.has(k.slice(6))));
     grid.innerHTML = '';
     for (const key of order) {
+      if (key.startsWith('ig:') ? !posts.has(key.slice(3)) : !locals.has(key.slice(6))) continue;
       const tile = document.createElement('div');
       tile.className = 'tile';
       tile.draggable = true;
@@ -82,7 +82,7 @@
       const img = document.createElement('img');
       img.loading = 'lazy';
       img.draggable = false;
-      const dot = document.createElement('i');
+      let dot = document.createElement('i');
       if (key.startsWith('ig:')) {
         const p = posts.get(key.slice(3));
         img.src = p.image || '';
@@ -93,11 +93,16 @@
         if (badge) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = badge; tile.append(b); }
       } else {
         const l = locals.get(key.slice(6));
-        img.src = l.url; img.alt = l.record.name || 'Planned photo';
-        dot.className = 'dot planned';
-        tile.title = 'Planned: ' + (l.record.name || '');
+        const live = !!l.record.live;
+        img.src = l.url; img.alt = l.record.name || 'Your photo';
+        dot = document.createElement('button');
+        dot.type = 'button';
+        dot.className = 'dot ' + (live ? 'live' : 'planned');
+        dot.title = live ? 'On Instagram (click to mark as planned)' : 'Planned (click to mark as on Instagram)';
+        dot.addEventListener('click', (e) => { e.stopPropagation(); toggleLive(key.slice(6)); });
+        tile.title = (live ? 'On Instagram: ' : 'Planned: ') + (l.record.name || '');
         const rm = document.createElement('button');
-        rm.className = 'remove'; rm.type = 'button'; rm.textContent = '×'; rm.title = 'Remove from plan';
+        rm.className = 'remove'; rm.type = 'button'; rm.textContent = '×'; rm.title = 'Remove';
         rm.addEventListener('click', (e) => { e.stopPropagation(); removeLocal(key.slice(6)); });
         tile.append(rm);
       }
@@ -111,8 +116,9 @@
     if (loaded) {
       const pr = feed.profile || {};
       $('avatar').src = pr.avatar || '';
+      $('avatar').hidden = !pr.avatar;
       $('pname').textContent = '@' + feed.username + (pr.fullName ? ' · ' + pr.fullName : '');
-      const planned = order.filter((k) => k.startsWith('local:')).length;
+      const planned = [...locals.values()].filter((l) => !l.record.live).length;
       $('pstats').textContent = [
         pr.postCount != null ? `${fmt(pr.postCount)} posts` : '',
         pr.followers != null ? `${fmt(pr.followers)} followers` : '',
@@ -131,6 +137,11 @@
       return 0;
     }
     order = saved.order; knownIg = saved.knownIg || [];
+    if (feed.source === 'live') {
+      const live = new Set(liveIds);
+      order = order.filter((k) => !k.startsWith('ig:') || live.has(k.slice(3)));
+    }
+    if (!liveIds.length) return 0;
     const known = new Set(knownIg);
     const inOrder = new Set(order);
     const fresh = liveIds.filter((id) => !known.has(id) && !inOrder.has('ig:' + id));
@@ -148,7 +159,7 @@
       const at = firstIg === -1 ? order.length : firstIg;
       order = [...order.slice(0, at), ...top, ...order.slice(at), ...bottom];
     }
-    knownIg = liveIds;
+    knownIg = [...new Set([...knownIg, ...liveIds])];
     return fresh.length;
   }
 
@@ -167,8 +178,15 @@
     busy(true); status('');
     try {
       const res = await fetch(`/api/feed?username=${encodeURIComponent(u)}${preferCache ? '&cache=1' : ''}`);
-      const data = await res.json();
-      if (!res.ok) { status(data.error || 'Could not load this account.', true); return; }
+      let data = await res.json();
+      let failMsg = null;
+      if (!res.ok) {
+        failMsg = data.error || 'Could not load this account.';
+        failMsg += /export/.test(failMsg)
+          ? ' You can still plan by adding photos.'
+          : ' You can still plan by adding photos or importing your Instagram data export.';
+        data = { username: u, profile: {}, posts: [], source: 'none' };
+      }
       const switched = u !== username;
       username = u; feed = data;
       LS.set('ifp:last', u);
@@ -177,7 +195,8 @@
       await loadLocals(u);
       savePlan();
       render();
-      if (data.source === 'cache') {
+      if (failMsg) status(failMsg, true);
+      else if (data.source === 'cache') {
         const when = new Date(data.fetchedAt).toLocaleString();
         status((data.warning ? data.warning + ' ' : '') + `Showing the saved copy from ${when}.`);
       }
@@ -237,17 +256,97 @@
     savePlan(); render();
   }
 
+  async function toggleLive(id) {
+    const l = locals.get(id);
+    if (!l) return;
+    l.record.live = !l.record.live;
+    if (l.record.live && !l.record.takenAt) l.record.takenAt = Math.floor(Date.now() / 1000);
+    await putPhoto(l.record).catch(() => {});
+    savePlan(); render();
+    toast(l.record.live ? 'Marked as on Instagram' : 'Marked as planned');
+  }
+
+  // Import the unzipped folder from Instagram's "Download your information" (JSON).
+  async function importExport(fileList) {
+    if (!username) { toast('Load or type a username first'); return; }
+    const files = [...fileList];
+    const jsons = files.filter((f) => /(^|\/)posts_\d+\.json$/i.test(f.webkitRelativePath || f.name));
+    if (!jsons.length) {
+      status('No posts file found. Pick the unzipped folder from Instagram\'s "Download your information", exported in JSON format.', true);
+      return;
+    }
+    const byPath = files.map((f) => [(f.webkitRelativePath || f.name).replace(/\\/g, '/'), f]);
+    const findFile = (uri) => {
+      const hit = byPath.find(([p]) => p.endsWith('/' + uri) || p === uri);
+      return hit && hit[1];
+    };
+    const entries = [];
+    for (const jf of jsons) {
+      let data;
+      try { data = JSON.parse(await jf.text()); } catch { continue; }
+      const list = Array.isArray(data) ? data : Object.values(data).find(Array.isArray) || [];
+      for (const item of list) {
+        const m = (Array.isArray(item.media) && item.media[0]) || item;
+        if (!m || !m.uri) continue;
+        entries.push({ uri: m.uri, t: item.creation_timestamp || m.creation_timestamp || 0, title: item.title || m.title || '' });
+      }
+    }
+    busy(true);
+    const have = new Set([...locals.values()].map((l) => l.record.source).filter(Boolean));
+    const igTimes = feed ? feed.posts.map((p) => p.takenAt) : [];
+    let added = 0, skippedVideo = 0, missing = 0;
+    try {
+      for (const e of entries) {
+        if (have.has(e.uri)) continue;
+        if (igTimes.some((t) => Math.abs(t - e.t) <= 120)) continue; // already loaded from Instagram
+        if (/\.(mp4|mov|webm)$/i.test(e.uri)) { skippedVideo++; continue; }
+        const file = findFile(e.uri);
+        if (!file) { missing++; continue; }
+        const blob = await shrink(file);
+        if (!blob) { missing++; continue; }
+        const id = crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2);
+        const record = { id, username, blob, name: e.title.slice(0, 60) || file.name, addedAt: Date.now(), live: true, takenAt: e.t, source: e.uri };
+        await putPhoto(record);
+        locals.set(id, { record, url: URL.createObjectURL(blob) });
+        added++;
+      }
+    } finally { busy(false); }
+    // Keep planned photos where they are; rebuild the "on Instagram" part in date order.
+    const firstLive = order.findIndex((k) => k.startsWith('ig:') || (k.startsWith('local:') && locals.get(k.slice(6))?.record.live));
+    const planned = order.filter((k) => k.startsWith('local:') && locals.has(k.slice(6)) && !locals.get(k.slice(6)).record.live);
+    const plannedTop = firstLive === -1 ? planned : planned.filter((k) => order.indexOf(k) < firstLive);
+    const plannedRest = planned.filter((k) => !plannedTop.includes(k));
+    order = [...plannedTop, ...liveOrder(), ...plannedRest];
+    savePlan(); render();
+    const notes = [];
+    if (skippedVideo) notes.push(`${skippedVideo} video${skippedVideo > 1 ? 's' : ''} skipped`);
+    if (missing) notes.push(`${missing} file${missing > 1 ? 's' : ''} not found`);
+    toast(`Imported ${added} post${added === 1 ? '' : 's'}` + (notes.length ? ` (${notes.join(', ')})` : ''));
+  }
+
+  // All "on Instagram" items in Instagram order: pinned first, then newest first.
+  function liveOrder() {
+    const items = feed.posts.map((p, i) => ({ key: 'ig:' + p.id, pinned: p.pinned, t: p.takenAt || 0, i }));
+    for (const [id, l] of locals) {
+      if (l.record.live) items.push({ key: 'local:' + id, pinned: false, t: l.record.takenAt || l.record.addedAt / 1000, i: 1e9 });
+    }
+    return items.sort((a, b) => (b.pinned - a.pinned) || (b.t - a.t) || (a.i - b.i)).map((x) => x.key);
+  }
+
   async function reset() {
     if (!feed) return;
-    const planned = locals.size;
+    const planned = [...locals.values()].filter((l) => !l.record.live).length;
     const msg = planned
       ? `Reset to the original Instagram feed?\n\nThis removes your ${planned} planned photo${planned > 1 ? 's' : ''} and undoes all moves.`
       : 'Reset to the original Instagram order?';
     if (!confirm(msg)) return;
-    for (const id of [...locals.keys()]) await deletePhoto(id).catch(() => {});
-    for (const l of locals.values()) URL.revokeObjectURL(l.url);
-    locals.clear();
-    order = feed.posts.map((p) => 'ig:' + p.id);
+    for (const [id, l] of [...locals]) {
+      if (l.record.live) continue;
+      await deletePhoto(id).catch(() => {});
+      URL.revokeObjectURL(l.url);
+      locals.delete(id);
+    }
+    order = liveOrder();
     knownIg = feed.posts.map((p) => p.id);
     savePlan(); render();
     toast('Back to the original feed');
@@ -278,7 +377,9 @@
     dragEl.classList.remove('dragging');
     dragEl = null;
     hideOverlay();
-    order = [...grid.children].map((t) => t.dataset.key);
+    const shown = [...grid.children].map((t) => t.dataset.key);
+    const set = new Set(shown);
+    order = [...shown, ...order.filter((k) => !set.has(k))];
     savePlan();
   });
 
@@ -313,6 +414,7 @@
   $('fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
   $('refreshBtn').addEventListener('click', () => username && load(username, { isRefresh: true }));
   $('resetBtn').addEventListener('click', reset);
+  $('importInput').addEventListener('change', (e) => { importExport(e.target.files); e.target.value = ''; });
   document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => setRatio(b.dataset.ratio)));
 
   setRatio(ratio);

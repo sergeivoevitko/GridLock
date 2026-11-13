@@ -1,16 +1,10 @@
-// Fetches a public Instagram profile without login.
-// Instagram limits this to the ~12 most recent posts and may rate-limit.
-const API_BASES = process.env.IG_API_BASE
-  ? [process.env.IG_API_BASE]
-  : ['https://i.instagram.com', 'https://www.instagram.com'];
-
-const HEADERS = {
-  'x-ig-app-id': '936619743392459',
-  'user-agent':
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-  accept: '*/*',
-  'accept-language': 'en-US,en;q=0.9',
-};
+// Loads a public Instagram profile without login by reading the post data that
+// Instagram embeds in the public profile page (newest ~12 posts).
+// Desktop mode passes its own page loader (a hidden browser window);
+// web mode fetches the page the way a browser opens it.
+const BASE = process.env.IG_BASE || 'https://www.instagram.com';
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 class IgError extends Error {
   constructor(message, code) {
@@ -19,78 +13,199 @@ class IgError extends Error {
   }
 }
 
-async function fetchProfile(username) {
-  let lastErr;
-  for (const base of API_BASES) {
-    const url = `${base}/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
-    let res;
-    try {
-      res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(15000) });
-    } catch (e) {
-      lastErr = new IgError('Could not reach Instagram. Check your internet connection.', 'offline');
-      continue;
-    }
-    if (res.status === 404) throw new IgError(`Account @${username} was not found.`, 'not_found');
-    if (res.status === 429 || res.status === 401 || res.status === 403) {
-      lastErr = new IgError('Instagram is limiting requests right now. Wait a few minutes and try again.', 'rate_limited');
-      continue;
-    }
-    if (!res.ok) {
-      lastErr = new IgError(`Instagram returned an error (${res.status}).`, 'bad_status');
-      continue;
-    }
-    let json;
-    try {
-      json = await res.json();
-    } catch {
-      lastErr = new IgError('Instagram sent an unexpected response (it may be asking for login).', 'bad_response');
-      continue;
-    }
-    const user = json && json.data && json.data.user;
-    if (!user) throw new IgError(`Account @${username} was not found.`, 'not_found');
-    return parseUser(user);
-  }
-  throw lastErr;
+const notFound = (u) =>
+  new IgError(
+    `Instagram did not show @${u}. If the account exists, Instagram may be blocking logged-out visits right now. Try again later, or import your Instagram data export.`,
+    'not_found'
+  );
+const loginWall = () =>
+  new IgError(
+    'Instagram asked for a login instead of showing the profile. Try again in a while, or import your Instagram data export.',
+    'login_required'
+  );
+
+const profileUrl = (u) => `${BASE}/${encodeURIComponent(u)}/`;
+
+function extractJsonScripts(html) {
+  const out = [];
+  const re = /<script type="application\/json"[^>]*>([\s\S]*?)<\/script>/g;
+  let m;
+  while ((m = re.exec(html))) out.push(m[1]);
+  return out;
 }
 
-function parseUser(user) {
-  const media = user.edge_owner_to_timeline_media || {};
-  const posts = (media.edges || []).map(({ node }) => ({
-    id: String(node.id),
-    shortcode: node.shortcode,
-    imageUrl: node.display_url || node.thumbnail_src,
-    isVideo: !!node.is_video,
-    isReel: node.product_type === 'clips',
-    isCarousel: node.__typename === 'GraphSidecar' || !!node.edge_sidecar_to_children,
-    pinned: Array.isArray(node.pinned_for_users) && node.pinned_for_users.length > 0,
-    takenAt: node.taken_at_timestamp || 0,
-    width: node.dimensions ? node.dimensions.width : null,
-    height: node.dimensions ? node.dimensions.height : null,
-    caption:
-      (node.edge_media_to_caption &&
-        node.edge_media_to_caption.edges[0] &&
-        node.edge_media_to_caption.edges[0].node.text) ||
-      '',
-  }));
+// Web mode: request the page like a browser navigation (Instagram only embeds
+// the data for page loads). Uses http(s).request because fetch() overrides the
+// Sec-Fetch headers.
+function getPage(url) {
+  const lib = url.startsWith('https:') ? require('https') : require('http');
+  return new Promise((resolve, reject) => {
+    const req = lib.get(
+      url,
+      {
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
+          'Upgrade-Insecure-Requests': '1',
+        },
+        timeout: 20000,
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+        res.on('error', reject);
+      }
+    );
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
+async function fetchPageScripts(username) {
+  let res;
+  try {
+    res = await getPage(profileUrl(username));
+  } catch {
+    throw new IgError('Could not reach Instagram. Check your internet connection.', 'offline');
+  }
+  if (res.status === 404) throw notFound(username);
+  if (res.status >= 300 && res.status < 400) throw loginWall();
+  if (res.status === 429) throw new IgError('Instagram is limiting requests right now. Wait a few minutes and try again.', 'rate_limited');
+  if (res.status >= 400) throw new IgError(`Instagram returned an error (${res.status}).`, 'bad_status');
+  return extractJsonScripts(res.body);
+}
+
+// ---------- parsing the embedded data ----------
+function walk(node, visit, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 60) return;
+  if (Array.isArray(node)) {
+    for (const x of node) walk(x, visit, depth + 1);
+    return;
+  }
+  visit(node);
+  for (const k in node) walk(node[k], visit, depth + 1);
+}
+
+function bestImage(candidates) {
+  if (!Array.isArray(candidates) || !candidates.length) return null;
+  return candidates.reduce((a, b) => ((b.width || 0) > (a.width || 0) ? b : a)).url || null;
+}
+
+function mediaFrom(o) {
+  // Current format (API v1 style objects)
+  if (typeof o.code === 'string' && (o.image_versions2 || o.carousel_media)) {
+    const cands =
+      (o.image_versions2 && o.image_versions2.candidates) ||
+      (o.carousel_media && o.carousel_media[0] && o.carousel_media[0].image_versions2 && o.carousel_media[0].image_versions2.candidates);
+    return {
+      id: String(o.pk || o.id || o.code).split('_')[0],
+      shortcode: o.code,
+      imageUrl: bestImage(cands),
+      isVideo: o.media_type === 2,
+      isReel: o.product_type === 'clips',
+      isCarousel: o.media_type === 8 || Array.isArray(o.carousel_media),
+      pinned: (Array.isArray(o.timeline_pinned_user_ids) && o.timeline_pinned_user_ids.length > 0) ||
+        (Array.isArray(o.pinned_for_users) && o.pinned_for_users.length > 0),
+      takenAt: o.taken_at || 0,
+      width: o.original_width || null,
+      height: o.original_height || null,
+      caption: (o.caption && o.caption.text) || '',
+      owner: (o.user && o.user.username) || (o.owner && o.owner.username) || null,
+    };
+  }
+  // Older GraphQL format
+  if (typeof o.shortcode === 'string' && (o.display_url || o.thumbnail_src)) {
+    return {
+      id: String(o.id || o.shortcode),
+      shortcode: o.shortcode,
+      imageUrl: o.display_url || o.thumbnail_src,
+      isVideo: !!o.is_video,
+      isReel: o.product_type === 'clips',
+      isCarousel: o.__typename === 'GraphSidecar' || !!o.edge_sidecar_to_children,
+      pinned: Array.isArray(o.pinned_for_users) && o.pinned_for_users.length > 0,
+      takenAt: o.taken_at_timestamp || 0,
+      width: o.dimensions ? o.dimensions.width : null,
+      height: o.dimensions ? o.dimensions.height : null,
+      caption:
+        (o.edge_media_to_caption && o.edge_media_to_caption.edges[0] && o.edge_media_to_caption.edges[0].node.text) || '',
+      owner: (o.owner && o.owner.username) || null,
+    };
+  }
+  return null;
+}
+
+function parsePage(scripts, username) {
+  const u = username.toLowerCase();
+  const posts = [];
+  const seen = new Set();
+  const profile = {};
+  const take = (k, v) => {
+    if (v != null && v !== '' && profile[k] == null) profile[k] = v;
+  };
+  for (const text of scripts) {
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    walk(json, (o) => {
+      const m = mediaFrom(o);
+      if (m) {
+        if (m.owner && m.owner.toLowerCase() !== u) return;
+        if (!m.imageUrl || seen.has(m.shortcode)) return;
+        seen.add(m.shortcode);
+        delete m.owner;
+        posts.push(m);
+        return;
+      }
+      if (typeof o.username === 'string' && o.username.toLowerCase() === u) {
+        take('fullName', o.full_name);
+        take('bio', o.biography);
+        take('picUrl', (o.hd_profile_pic_url_info && o.hd_profile_pic_url_info.url) || o.profile_pic_url_hd || o.profile_pic_url);
+        take('followers', o.follower_count != null ? o.follower_count : o.edge_followed_by && o.edge_followed_by.count);
+        take('following', o.following_count != null ? o.following_count : o.edge_follow && o.edge_follow.count);
+        take('postCount', o.media_count != null ? o.media_count : o.edge_owner_to_timeline_media && o.edge_owner_to_timeline_media.count);
+        if (typeof o.is_private === 'boolean') take('isPrivate', o.is_private);
+        profile.found = true;
+      }
+    });
+  }
+  return { posts, profile };
+}
+
+async function fetchProfile(username, { getScripts } = {}) {
+  const scripts = await (getScripts || fetchPageScripts)(username);
+  const { posts, profile } = parsePage(scripts, username);
+  if (!posts.length) {
+    if (profile.isPrivate) throw new IgError(`@${username} is a private account. Only public accounts can be loaded without login.`, 'private');
+    if (!profile.found) throw scripts.length ? notFound(username) : loginWall();
+  }
   return {
     profile: {
-      username: user.username,
-      fullName: user.full_name || '',
-      bio: user.biography || '',
-      picUrl: user.profile_pic_url_hd || user.profile_pic_url || '',
-      followers: user.edge_followed_by ? user.edge_followed_by.count : null,
-      following: user.edge_follow ? user.edge_follow.count : null,
-      postCount: media.count != null ? media.count : posts.length,
-      isPrivate: !!user.is_private,
+      username,
+      fullName: profile.fullName || '',
+      bio: profile.bio || '',
+      picUrl: profile.picUrl || '',
+      followers: profile.followers != null ? profile.followers : null,
+      following: profile.following != null ? profile.following : null,
+      postCount: profile.postCount != null ? profile.postCount : posts.length,
+      isPrivate: !!profile.isPrivate,
     },
     posts,
   };
 }
 
 async function downloadImage(url) {
-  const res = await fetch(url, { headers: { 'user-agent': HEADERS['user-agent'] }, signal: AbortSignal.timeout(20000) });
+  const res = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error(`image ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
 }
 
-module.exports = { fetchProfile, downloadImage, IgError };
+module.exports = { fetchProfile, downloadImage, extractJsonScripts, profileUrl, IgError, notFound, loginWall };

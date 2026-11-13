@@ -30,6 +30,10 @@
         <input id="fileInput" type="file" accept="image/*" multiple hidden>
         <span>＋ Add photos</span>
       </label>
+      <label class="btn" title="Import the folder from Instagram's 'Download your information' (JSON format), unzipped">
+        <input id="importInput" type="file" webkitdirectory multiple hidden>
+        <span>⤓ Import export</span>
+      </label>
       <button class="btn" id="refreshBtn" title="Get the latest posts from Instagram and keep your plan">↻ Refresh</button>
       <button class="btn" id="resetBtn" title="Remove planned photos and restore the original order">Reset</button>
       <div class="seg" role="group" aria-label="Tile shape">
@@ -41,7 +45,7 @@
     <div class="legend" id="legend" hidden>
       <span><i class="dot live"></i>On Instagram</span>
       <span><i class="dot planned"></i>Planned</span>
-      <span class="hint">Drag tiles to rearrange. Drop photos anywhere to add them.</span>
+      <span class="hint">Drag tiles to rearrange. Drop photos anywhere to add them. Click the dot on one of your photos to switch it between planned and on Instagram.</span>
     </div>
 
     <div id="status" class="status" hidden></div>

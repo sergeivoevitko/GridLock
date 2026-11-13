@@ -24,10 +24,29 @@ Install **Node.js** (version 18 or newer) from https://nodejs.org (the "LTS" but
 1. Type a username and press **Load**.
 2. Add photos with **+ Add photos**, or drag them from your folders into the app.
    Drop them on a tile to insert them at that spot, or anywhere else to put them on top.
-3. Drag any tile to move it. 🟢 green dot = already on Instagram, 🟣 purple dot = planned.
+3. Drag any tile to move it. 🟢 green dot = on Instagram, 🟣 purple dot = planned.
+   Click the dot on one of your own photos to switch it between planned and on Instagram.
 4. **Refresh** pulls new posts from Instagram and keeps your plan.
 5. **Reset** removes planned photos and restores the original order.
 6. **4:5 / 1:1** switches between Instagram's current portrait grid and the classic square grid.
+
+## How loading works
+GridLock opens the account's public profile page, like a visitor would, and reads the
+newest ~12 posts from it. The desktop app does this in a hidden browser window, which
+tends to be the most reliable. No login, and nothing is posted.
+
+Instagram changes this page often and sometimes blocks logged-out visits. When that
+happens GridLock tells you, and you can keep planning with the options below.
+
+## Import your full grid (backup option)
+1. In the Instagram app: **Settings > Accounts Center > Your information and permissions >
+   Download your information**. Choose your account, **Some of your information > Posts**,
+   format **JSON**, and request it.
+2. When Instagram emails you the download, unzip it.
+3. In GridLock, load or type your username, press **Import export**, and pick the unzipped folder.
+
+All your photo posts are added with a green dot, in date order. Videos are skipped, and
+posts already loaded from Instagram aren't added twice.
 
 ## Offline
 Every time a feed loads, a copy of it (images included) is saved on your computer.
@@ -35,9 +54,9 @@ When you reopen the app it shows your last account and plan right away, even wit
 internet. Refresh needs internet.
 
 ## Good to know
-- Without login, Instagram only gives the ~12 most recent posts. Older posts seen in
+- Only public accounts can be loaded by username, newest ~12 posts. Older posts seen in
   earlier loads are kept, so the grid grows over time.
-- Instagram sometimes limits requests. If that happens, wait a few minutes; the saved copy is shown meanwhile.
-- Private accounts can't be loaded.
+- If Instagram limits requests, wait a while; the saved copy is shown meanwhile.
 - Web mode and desktop mode keep separate plans.
 - HEIC photos (iPhone) may not open in every browser. Use JPG or PNG if one fails.
+- Pulling data from Instagram automatically may go against Instagram's terms. Keep it to light, personal use.

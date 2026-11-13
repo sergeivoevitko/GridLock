@@ -22,7 +22,7 @@ function cleanUsername(raw) {
   return /^[a-z0-9._]{1,30}$/.test(u) ? u : null;
 }
 
-function createServer(dataDir) {
+function createServer(dataDir, { getScripts } = {}) {
   const feedsDir = path.join(dataDir, 'feeds');
   const mediaDir = path.join(dataDir, 'media');
   fs.mkdirSync(feedsDir, { recursive: true });
@@ -52,7 +52,7 @@ function createServer(dataDir) {
   }
 
   async function fetchLive(u) {
-    const live = await fetchProfile(u);
+    const live = await fetchProfile(u, { getScripts });
     if (live.profile.isPrivate && live.posts.length === 0) {
       throw new IgError(`@${u} is a private account. Only public accounts can be loaded without login.`, 'private');
     }
@@ -113,7 +113,7 @@ function createServer(dataDir) {
           return send(res, 200, { ...feed, source: 'live' });
         } catch (e) {
           const msg = e instanceof IgError ? e.message : 'Something went wrong while loading from Instagram.';
-          if (cached && !(e.code === 'not_found' || e.code === 'private')) {
+          if (cached && e.code !== 'private') {
             return send(res, 200, { ...cached, source: 'cache', warning: msg });
           }
           return send(res, 502, { error: msg, code: e.code || 'unknown' });
@@ -139,9 +139,9 @@ function createServer(dataDir) {
   });
 }
 
-function start({ port, dataDir, host = '127.0.0.1' }) {
+function start({ port, dataDir, host = '127.0.0.1', getScripts }) {
   return new Promise((resolve, reject) => {
-    const server = createServer(dataDir);
+    const server = createServer(dataDir, { getScripts });
     server.once('error', reject);
     server.listen(port, host, () => resolve(server));
   });
