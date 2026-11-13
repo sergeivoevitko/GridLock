@@ -3,7 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { fetchProfile, downloadImage, IgError } = require('./instagram');
+const { fetchProfile, downloadImage, diagnose, IgError } = require('./instagram');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MIME = {
@@ -118,6 +118,10 @@ function createServer(dataDir, { getScripts } = {}) {
           }
           return send(res, 502, { error: msg, code: e.code || 'unknown' });
         }
+      }
+      if (url.pathname === '/api/diagnose') {
+        const u = cleanUsername(url.searchParams.get('username'));
+        return send(res, 200, u ? diagnose(u) : 'No username', 'text/plain; charset=utf-8');
       }
       if (url.pathname === '/api/saved') {
         const names = fs.readdirSync(feedsDir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));

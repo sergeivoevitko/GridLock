@@ -9,16 +9,11 @@ add photos from your computer, and drag everything around. Nothing is ever poste
 Install **Node.js** (version 18 or newer) from https://nodejs.org (the "LTS" button).
 
 ## Run it
-
-**Web mode** (opens in your browser):
 - Windows: double-click `start-web.bat`
-- Or in a terminal in this folder: `npm run web`
-- Then open http://localhost:5178 (it opens automatically). Keep the black window open while you use it.
+- Or in a terminal in this folder: `npm start`
 
-**Desktop mode** (its own app window):
-- Windows: double-click `start-desktop.bat` (the first run downloads the app parts, about 1 minute)
-- Or: `npm install` once, then `npm run desktop`
-- To build a single .exe you can keep anywhere: `npm run dist` (output in the `dist` folder)
+Your browser opens http://localhost:5178. Keep the small black window open while you use
+GridLock; close it to stop. Nothing needs to be installed besides Node.js.
 
 ## How to use
 1. Type a username and press **Load**.
@@ -32,8 +27,7 @@ Install **Node.js** (version 18 or newer) from https://nodejs.org (the "LTS" but
 
 ## How loading works
 GridLock opens the account's public profile page, like a visitor would, and reads the
-newest ~12 posts from it. The desktop app does this in a hidden browser window, which
-tends to be the most reliable. No login, and nothing is posted.
+newest ~12 posts from it. No login, and nothing is posted.
 
 Instagram changes this page often and sometimes blocks logged-out visits. When that
 happens GridLock tells you, and you can keep planning with the options below.
@@ -49,14 +43,15 @@ All your photo posts are added with a green dot, in date order. Videos are skipp
 posts already loaded from Instagram aren't added twice.
 
 ## Offline
-Every time a feed loads, a copy of it (images included) is saved on your computer.
-When you reopen the app it shows your last account and plan right away, even without
-internet. Refresh needs internet.
+GridLock runs entirely on your computer, so it works without internet. Every time a feed
+loads, a copy of it (images included) is saved locally, and your plan is saved in your
+browser. Offline you can open the app, see your last loaded feed, add photos, drag things
+around and reset. Only Load and Refresh need internet.
 
 ## Good to know
 - Only public accounts can be loaded by username, newest ~12 posts. Older posts seen in
   earlier loads are kept, so the grid grows over time.
 - If Instagram limits requests, wait a while; the saved copy is shown meanwhile.
-- Web mode and desktop mode keep separate plans.
+- Your plan is saved in the browser you use. Use the same browser each time (a different browser starts a fresh plan).
 - HEIC photos (iPhone) may not open in every browser. Use JPG or PNG if one fails.
 - Pulling data from Instagram automatically may go against Instagram's terms. Keep it to light, personal use.

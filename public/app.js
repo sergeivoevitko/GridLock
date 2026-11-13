@@ -196,6 +196,19 @@
       savePlan();
       render();
       if (failMsg) status(failMsg, true);
+      else if (data.source === 'live' && !data.posts.length) {
+        status('Instagram showed the profile but GridLock could not find the posts on the page. ' +
+          'Press the button and paste the report to the GridLock developer (it lists only data field names, nothing personal).', true);
+        const btn = document.createElement('button');
+        btn.className = 'btn'; btn.type = 'button'; btn.textContent = 'Copy diagnostic report';
+        btn.style.marginTop = '8px'; btn.style.display = 'flex';
+        btn.addEventListener('click', async () => {
+          const text = await (await fetch('/api/diagnose?username=' + encodeURIComponent(u))).text();
+          try { await navigator.clipboard.writeText(text); toast('Report copied. Paste it in your message.'); }
+          catch { window.open('/api/diagnose?username=' + encodeURIComponent(u)); }
+        });
+        $('status').append(btn);
+      }
       else if (data.source === 'cache') {
         const when = new Date(data.fetchedAt).toLocaleString();
         status((data.warning ? data.warning + ' ' : '') + `Showing the saved copy from ${when}.`);

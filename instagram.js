@@ -1,7 +1,6 @@
 // Loads a public Instagram profile without login by reading the post data that
 // Instagram embeds in the public profile page (newest ~12 posts).
-// Desktop mode passes its own page loader (a hidden browser window);
-// web mode fetches the page the way a browser opens it.
+// The page is requested the way a browser opens it.
 const BASE = process.env.IG_BASE || 'https://www.instagram.com';
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -99,20 +98,23 @@ function bestImage(candidates) {
 
 function mediaFrom(o) {
   // Current format (API v1 style objects)
-  if (typeof o.code === 'string' && (o.image_versions2 || o.carousel_media)) {
-    const cands =
-      (o.image_versions2 && o.image_versions2.candidates) ||
-      (o.carousel_media && o.carousel_media[0] && o.carousel_media[0].image_versions2 && o.carousel_media[0].image_versions2.candidates);
+  const first = Array.isArray(o.carousel_media) && o.carousel_media[0];
+  const v1Image =
+    bestImage(o.image_versions2 && o.image_versions2.candidates) ||
+    bestImage(first && first.image_versions2 && first.image_versions2.candidates) ||
+    o.display_uri || o.display_url || o.thumbnail_url || o.thumbnail_src ||
+    (first && (first.display_uri || first.display_url)) || null;
+  if (typeof o.code === 'string' && /^[\w-]{2,}$/.test(o.code) && v1Image) {
     return {
       id: String(o.pk || o.id || o.code).split('_')[0],
       shortcode: o.code,
-      imageUrl: bestImage(cands),
+      imageUrl: v1Image,
       isVideo: o.media_type === 2,
       isReel: o.product_type === 'clips',
       isCarousel: o.media_type === 8 || Array.isArray(o.carousel_media),
       pinned: (Array.isArray(o.timeline_pinned_user_ids) && o.timeline_pinned_user_ids.length > 0) ||
         (Array.isArray(o.pinned_for_users) && o.pinned_for_users.length > 0),
-      takenAt: o.taken_at || 0,
+      takenAt: o.taken_at || o.taken_at_timestamp || 0,
       width: o.original_width || null,
       height: o.original_height || null,
       caption: (o.caption && o.caption.text) || '',
@@ -120,11 +122,11 @@ function mediaFrom(o) {
     };
   }
   // Older GraphQL format
-  if (typeof o.shortcode === 'string' && (o.display_url || o.thumbnail_src)) {
+  if (typeof o.shortcode === 'string' && (o.display_url || o.display_uri || o.thumbnail_src)) {
     return {
       id: String(o.id || o.shortcode),
       shortcode: o.shortcode,
-      imageUrl: o.display_url || o.thumbnail_src,
+      imageUrl: o.display_url || o.display_uri || o.thumbnail_src,
       isVideo: !!o.is_video,
       isReel: o.product_type === 'clips',
       isCarousel: o.__typename === 'GraphSidecar' || !!o.edge_sidecar_to_children,
@@ -180,9 +182,22 @@ function parsePage(scripts, username) {
   return { posts, profile };
 }
 
+const lastPage = new Map(); // username -> what the last load saw (for the diagnostic report)
+
 async function fetchProfile(username, { getScripts } = {}) {
-  const scripts = await (getScripts || fetchPageScripts)(username);
+  const got = await (getScripts || fetchPageScripts)(username);
+  const page = Array.isArray(got) ? { scripts: got, mode: 'web' } : got;
+  const scripts = page.scripts || [];
   const { posts, profile } = parsePage(scripts, username);
+  // Posts read from a rendered page, if a page loader provides them.
+  if (!posts.length && Array.isArray(page.domPosts)) {
+    for (const d of page.domPosts) {
+      if (!d.img || posts.some((p) => p.shortcode === d.shortcode)) continue;
+      posts.push({ id: d.shortcode, shortcode: d.shortcode, imageUrl: d.img, isVideo: d.kind === 'reel', isReel: d.kind === 'reel',
+        isCarousel: false, pinned: !!d.pinned, takenAt: 0, width: null, height: null, caption: d.alt || '' });
+    }
+  }
+  lastPage.set(username, { ...page, parsedPosts: posts.length, profileFound: !!profile.found, at: new Date().toISOString() });
   if (!posts.length) {
     if (profile.isPrivate) throw new IgError(`@${username} is a private account. Only public accounts can be loaded without login.`, 'private');
     if (!profile.found) throw scripts.length ? notFound(username) : loginWall();
@@ -195,11 +210,51 @@ async function fetchProfile(username, { getScripts } = {}) {
       picUrl: profile.picUrl || '',
       followers: profile.followers != null ? profile.followers : null,
       following: profile.following != null ? profile.following : null,
-      postCount: profile.postCount != null ? profile.postCount : posts.length,
+      postCount: profile.postCount != null ? profile.postCount : posts.length || null,
       isPrivate: !!profile.isPrivate,
     },
     posts,
   };
+}
+
+// A report of the page's data *structure* (field names and counts, no values),
+// so a missing format can be fixed without sharing personal data.
+function diagnose(username) {
+  const page = lastPage.get(username);
+  if (!page) return 'No load recorded for @' + username + ' yet. Press Refresh first, then copy the report again.';
+  const scripts = page.scripts || [];
+  const all = scripts.join('\n');
+  const count = (needle) => all.split(needle).length - 1;
+  const interesting = /media|post|timeline|edge|node|code|image|display|thumb|xdt|clip|feed|carousel|candidate|items|grid|profile|user/i;
+  const paths = new Map();
+  for (const text of scripts) {
+    let json;
+    try { json = JSON.parse(text); } catch { continue; }
+    (function rec(node, path, depth) {
+      if (!node || typeof node !== 'object' || depth > 40) return;
+      if (Array.isArray(node)) { for (const x of node.slice(0, 50)) rec(x, path + '[]', depth + 1); return; }
+      for (const k of Object.keys(node)) {
+        if (/^\d+$/.test(k)) continue;
+        const p = (path ? path + '.' : '') + k;
+        const short = p.split('.').slice(-6).join('.');
+        if (interesting.test(k)) paths.set(short, (paths.get(short) || 0) + 1);
+        rec(node[k], p, depth + 1);
+      }
+    })(json, '', 0);
+  }
+  const lines = [
+    'GridLock diagnostic report',
+    `mode: ${page.mode || 'web'} | time: ${page.at}`,
+    `json scripts: ${scripts.length} | chars: ${all.length}`,
+    `posts parsed: ${page.parsedPosts} | profile found: ${page.profileFound}`,
+    `post links on rendered page: ${Array.isArray(page.domPosts) ? page.domPosts.length : 'n/a (web mode)'}`,
+    'raw counts: ' + ['"code":"', '"shortcode":"', 'image_versions2', 'display_uri', 'display_url', 'thumbnail', 'xdt_api__v1__feed__user_timeline', 'timeline_media', 'carousel_media', '"media_type"', '/p/', 'login']
+      .map((n) => `${n}=${count(n)}`).join(' '),
+    '',
+    'field paths (count):',
+    ...[...paths].sort((a, b) => a[0].localeCompare(b[0])).slice(0, 300).map(([p, c]) => `  ${p} (${c})`),
+  ];
+  return lines.join('\n');
 }
 
 async function downloadImage(url) {
@@ -208,4 +263,4 @@ async function downloadImage(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-module.exports = { fetchProfile, downloadImage, extractJsonScripts, profileUrl, IgError, notFound, loginWall };
+module.exports = { diagnose, fetchProfile, downloadImage, extractJsonScripts, profileUrl, IgError, notFound, loginWall };
