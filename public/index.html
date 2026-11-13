@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GridLock</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">GridLock</div>
+    <form id="userForm" class="userform" autocomplete="off">
+      <span class="at">@</span>
+      <input id="username" type="text" placeholder="username" spellcheck="false" aria-label="Instagram username">
+      <button type="submit" class="btn primary" id="loadBtn">Load</button>
+    </form>
+  </header>
+
+  <main class="wrap">
+    <section id="profile" class="profile" hidden>
+      <img id="avatar" class="avatar" alt="">
+      <div class="pinfo">
+        <div id="pname" class="pname"></div>
+        <div id="pstats" class="pstats"></div>
+      </div>
+    </section>
+
+    <section class="toolbar" id="toolbar" hidden>
+      <label class="btn">
+        <input id="fileInput" type="file" accept="image/*" multiple hidden>
+        <span>＋ Add photos</span>
+      </label>
+      <button class="btn" id="refreshBtn" title="Get the latest posts from Instagram and keep your plan">↻ Refresh</button>
+      <button class="btn" id="resetBtn" title="Remove planned photos and restore the original order">Reset</button>
+      <div class="seg" role="group" aria-label="Tile shape">
+        <button type="button" data-ratio="45" class="on">4:5</button>
+        <button type="button" data-ratio="11">1:1</button>
+      </div>
+    </section>
+
+    <div class="legend" id="legend" hidden>
+      <span><i class="dot live"></i>On Instagram</span>
+      <span><i class="dot planned"></i>Planned</span>
+      <span class="hint">Drag tiles to rearrange. Drop photos anywhere to add them.</span>
+    </div>
+
+    <div id="status" class="status" hidden></div>
+
+    <section id="grid" class="grid r45" aria-label="Feed grid"></section>
+
+    <section id="empty" class="empty">
+      <h1>Plan your grid before you post</h1>
+      <p>Enter a public Instagram username to load the current feed, then add photos to see how they fit.</p>
+      <p class="small">No login. Nothing is ever posted. Your plan stays on this computer.</p>
+    </section>
+  </main>
+
+  <div id="dropOverlay" class="drop-overlay" hidden><div>Drop photos to add them to your plan</div></div>
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

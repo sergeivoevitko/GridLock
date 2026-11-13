@@ -1,0 +1,23 @@
+{
+  "name": "gridlock",
+  "version": "1.0.0",
+  "description": "Plan your Instagram grid ahead of time. Web or desktop, works offline.",
+  "main": "electron-main.js",
+  "scripts": {
+    "web": "node server.js --open",
+    "desktop": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "local.gridlock",
+    "productName": "GridLock",
+    "files": ["electron-main.js", "server.js", "instagram.js", "public/**/*"],
+    "win": { "target": "portable" },
+    "mac": { "target": "dmg" },
+    "linux": { "target": "AppImage" }
+  }
+}
